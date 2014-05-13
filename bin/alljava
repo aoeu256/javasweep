@@ -1,0 +1,1401 @@
+
+import java.awt.event.*;
+import java.awt.*;
+import java.util.*;
+
+import javax.swing.JApplet;
+import javax.swing.JComponent;
+
+public class Area extends JComponent implements KeyListener, MouseMotionListener, MouseListener {
+	private static final long serialVersionUID = 1L;
+    public int[][] map;
+    public HashMap<Pair, Piece> map2piece;
+    public Pair pos = new Pair(0, 0);
+    public int width = 24, height = 16;
+    public int blocksize = 16;
+    public int piecetarget = 40;
+    public int chaint = 15;
+    public int chainreset = 5;
+    public int fallt = 5;
+        
+    public Random rand;
+    
+    public JApplet Main;
+
+    // used for finding star alignments 
+    Pair[] starx;
+    Pair[] stary;
+
+    Vector<Piece> pieces;
+
+    public int delay = 0;
+    public int repeatRate = 1;
+    public int pause = 10;
+    public int t = 0;
+    public Boolean replaymode = false;
+    //public List replay;
+    public int chain = 1;
+    public int chaintimer = 0;
+    public int score = 0;
+    
+    Pair selectpos; // Screwy stuff happens without this
+    
+    public final static int Updatemap = 0;
+    public final static int Updatepieces = 1;
+    public final static int Updateplace = 2;
+    //public final static int Update
+    public boolean[] updateflag; // should this be updated
+    HashSet<Integer> buttonheld; // Holds if a few buttons were being held
+
+    public Vector<Combo> combos;
+    public Vector<Task> tasks;
+
+    public Cursor cur;
+    
+    public int place1 = KeyEvent.VK_A; 
+    public int place2 = KeyEvent.VK_O;
+    public int rotateright = KeyEvent.VK_E;
+    public int rotateleft = KeyEvent.VK_U;
+    public int piecemove = KeyEvent.VK_SPACE;
+    public int up = KeyEvent.VK_UP;
+    public int down = KeyEvent.VK_DOWN;
+    public int left = KeyEvent.VK_LEFT;
+    public int right = KeyEvent.VK_RIGHT;
+	//private JApplet main;
+	public Piece chainstopper;
+	@SuppressWarnings("unused")
+	private JApplet main;
+	private Pair mousepos;
+
+    public boolean blockbounds(int x, int y)
+    {
+//        System.out.format("%d, %d\n", x, y);
+//        System.out.format("%d, %d\n", width, height);
+    	return (x >= 0 && x < width) && (y >= 0 && y < height);
+    }
+    public boolean pixelbounds(Pair pos)
+    {
+        return true;
+    }
+    
+    public Area(JApplet main)
+    {
+        super();
+        this.main = main;
+		pieces = new Vector<Piece>(64);
+		rand = new Random();
+        map = new int[height][width];
+    	map2piece = new HashMap<Pair, Piece>();
+        tasks = new Vector<Task>(16);
+        combos = new Vector<Combo>();
+        cur = new Cursor(this);
+        updateflag = new boolean[8];
+        mousepos = new Pair(0, 0);
+        buttonheld = new HashSet<Integer>();
+        this.setBackground(Color.BLACK);
+        this.setBounds(pos.x, pos.y, width*blocksize, height*blocksize);
+    }
+    
+    public Pair midpixelpos(Pair block)
+    {
+        return new Pair(block.x*blocksize+blocksize/2+pos.x, block.y*blocksize+blocksize/2+pos.y);
+    }
+	
+
+    public void paintComponent(Graphics g) {
+    	g.clearRect(pos.x, pos.y, pos.x+getWidth(), pos.y+getHeight());
+    	g.setColor(Color.WHITE);
+		g.drawRect(pos.x, pos.y, pos.x+width*16, pos.y+height*16);
+		String text = "cursor:("+cur.pos.x+","+cur.pos.y+")";
+		String text2 = "chain:"+chain;
+		g.drawString(text, width*blocksize+8, 16);
+		g.drawString(text2, width*blocksize+8, 32);
+		for(Piece p: pieces) {
+			if(!p.deleted)
+				p.paint(this, g, true);
+		}
+		cur.paint(g);
+		for(Pair p : map2piece.keySet()) {
+			Pair o = this.pixelpos(p);
+			g.setColor(Color.WHITE);
+			g.drawOval(o.x, o.y, blocksize, blocksize);
+		}
+		for(Task i : tasks) {
+			i.paint(this, g);
+		}
+	}
+    
+    public void keyPressed(KeyEvent e) {
+		
+    	int code = e.getKeyCode();
+    	/*
+    	if     (code == up)    cur.moveup();
+    	else if(code == right) cur.moveright();
+    	else if(code == down)  cur.movedown();
+    	else if(code == left)  cur.moveleft();
+    	*/
+    	if(code == KeyEvent.VK_1) this.genstack();
+    	else if(code == place1 || code == place2) {
+    		updateflag[Updateplace] = true;
+    		selectpos = new Pair(cur.pos.x, cur.pos.y);
+    	}
+    	else if(code == rotateright) {
+    		if(cur.p != null)
+    			cur.p.rotateright();
+    		buttonheld.add(rotateright);
+    	}
+    	
+        else if(code == rotateleft) {
+    		if(cur.p != null)
+    			cur.p.rotateleft();
+    		buttonheld.add(rotateleft);
+        }
+        else if(code == KeyEvent.VK_M)
+        	printmap();
+        else if(code == KeyEvent.VK_2)
+        	System.out.println("map2piece is"+ map2piece);
+        else if(code == KeyEvent.VK_C) {
+        	System.out.println("The combos are");
+        	for(Combo comb : combos) {
+        		System.out.format("%3d %s", comb.combot, comb.combo);
+        	}
+        }
+        else if(code == KeyEvent.VK_P) {
+        	System.out.println("Pieces are");
+        	for(Piece p : pieces) {
+        		System.out.println(p);
+        	}
+        }
+    	this.repaint();
+	}
+	public synchronized void grabpiece() {
+		if(cur.p == null) {
+			Piece p = map2piece.get(selectpos);				
+			System.out.print("got "+p+"\n");
+			if(p != null && !p.incombo) {
+				cur.setPiece(p);  
+				p.unmap(this);	
+				// tell adj top piece that it can start to fall
+				for(Piece fp : p.adjpieces(p.shape.top[p.rot], this)) {
+					if(fp.canfall(this))
+						fp.fallt = this.fallt - 1;
+				}
+				System.out.println("grab piece");
+				if(buttonheld.contains(rotateright))
+					cur.p.rotateright();
+				if(buttonheld.contains(rotateleft))
+					cur.p.rotateleft();
+				updateflag[Updatepieces] = true;
+				p.fallt = this.fallt; // Reset timers
+				p.canchain = false;
+			}
+		}
+	}
+
+	public void keyReleased(KeyEvent e) {
+		buttonheld.remove(e.getKeyCode());		
+	}
+
+	public void keyTyped(KeyEvent arg0) {
+		// TODO Auto-generated method stub
+		
+	}
+	
+	public int midpixelx(int blockx) {
+		return blockx*blocksize+blocksize/2+pos.x; 
+	}
+	
+	public int midpixely(int blocky) {
+		return blocky*blocksize+blocksize/2+pos.y;
+	}
+	
+	public Pair pixelpos(Pair block) {
+		return new Pair(block.x*blocksize+pos.y, block.y*blocksize+pos.y);
+	}
+	
+	public void clearmap()
+	{
+		for (int y=0; y<height; y++)
+			for(int x=0; x<width; x++)
+				map[y][x] = 0;
+	}
+	
+	public void printmap() {
+		System.out.println("----------------------------");
+		for (int y=0; y<height; y++) {
+			for(int x=0; x<width; x++)
+				System.out.print(map[y][x]);
+			System.out.println("");
+		}
+		System.out.println("----------------------------");
+	}
+
+	Letter randomletter()
+	{
+		final Letter[] letters = Letter.values();
+		return letters[rand.nextInt(letters.length)];
+	}
+	
+	public synchronized void placepiece() {
+		if(cur.p.canfit(map2piece)) {				
+			cur.pos = new Pair(selectpos.x, selectpos.y);
+			cur.p.map(this);
+			if(cur.p.canfall(this))
+				cur.p.fallt = fallt - 1; // start the piece falling
+			cur.p = null;
+		}
+		else {
+			// Bubble the piece up
+			boolean deletepiece = false;
+			while(!cur.p.canfit(map2piece)) {
+				cur.p.pos.y -= 1;
+				if(cur.p.pos.y < 0) {
+					deletepiece = true;
+					break;
+				}
+			}
+			if(deletepiece) {
+				cur.p.deleted = true;
+			}
+			cur.p = null;
+		}
+	}
+	
+	public void genstack()
+	{
+		cur.p = null;
+		clearmap();
+		pieces.clear();
+		map2piece.clear();
+		
+		//pieceTarget = {'J':2, 'O':2, 'L':2, 'Z':2, 'I':2, 'S':2, 'T':2}
+		//sumtarget = 25#sum(pieceTarget.values());
+		final int sumtarget = 40;
+		final int tries = 100;
+		//fp = fps.FPSManager(
+		for(int i=0; i<tries; i++)
+		{
+			
+			if(pieces.size() == sumtarget)
+				break;
+			Letter letter = randomletter();
+
+			Piece p = new Piece(this, new Pair(0,0), letter, rand.nextInt(4));
+			p.pos.x = rand.nextInt(width - p.width() + 1);
+			//p.x = ika.Random(0, width - len(p.shape[0]) + 1);`
+			p.bottomfall(this);
+			
+			if(p.pos.y > 0 && !(p.cancombo(this))) {
+				p.domap(this);
+				
+				pieces.add(p);
+				//printmap();
+			}
+		}
+		if(pieces.size() < sumtarget)
+			genstack();
+			
+		for(Piece p: pieces)
+			p.dodict(map2piece);
+		
+		System.out.println("map2piece is " + map2piece);
+		System.gc();		
+	}
+	
+	void gameupdate() {
+		for(Task i : tasks)
+			i.update();
+		
+		// update input
+		if (updateflag[Updateplace]) {
+			if(cur.p == null)
+				grabpiece();
+			else
+				placepiece();
+			updateflag[Updateplace] = false;
+		}
+		
+		updatecombos();
+		updatemap();		
+		updatepieces(); // let the pieces fall
+		
+		this.repaint();
+	}
+	private void updatepieces() {
+		if(updateflag[Updatepieces]) {
+			boolean deactivatechain = true;
+			for(Piece p : pieces) {
+				if(!p.deleted && p != cur.p)
+					p.gameupdate(this);
+				if(p.canchain)
+					deactivatechain = false;
+			}
+			if(deactivatechain) {
+				chain = 1;
+			}
+		}
+	}
+	private void updatemap() {
+		updateflag[Updatemap] = true;
+		if(updateflag[Updatemap]) {
+			clearmap();
+			map2piece.clear();
+			for(Piece p : pieces) {
+				if(p != cur.p && !p.deleted) {
+					p.map(this);
+				}
+			}
+			updateflag[Updatemap] = false;
+		}
+	}
+	private void updatecombos() {
+		Combo combo = new Combo(this);
+		
+		for(int y=0; y<height; y++) {
+			for(int x=0; x<width; x++) {
+				if(map[y][x] == 2) {					
+					if(y+1 < height && map[y+1][x] == 2)
+						tryaddpiecegroup(y, x, y+1, x, combo);
+					if(x+1 < width && map[y][x+1] == 2)
+						tryaddpiecegroup(y, x, y, x+1, combo);
+				}
+			}
+		}
+		if(combo.combo.size() > 1) {
+			updateflag[Updatemap] = true;
+			
+			// If any piece inside the combo can chain raise the chain number
+			boolean canchain = false;
+			int cardx = 0;
+			
+			int cardy = 0;
+			
+			for(Piece i : combo.combo) {
+				if(i.canchain)
+					canchain = true;
+				cardx += i.pos.x;
+				cardy += i.pos.y;
+				System.out.println("x:" + i.pos.x + "y:" + i.pos.y);
+			}
+			if(canchain)
+				chain++;
+			combos.add(combo);
+			System.out.println("COMBO!"+combo.combo.size());
+			String text = "";
+			if(chain > 1) {
+				text = chain + "x CHAIN";				
+			}
+			if(combo.combo.size() > 2) {
+				text = text + " " + combo.combo.size() + " COMBO";
+			}			
+			cardx /= combo.combo.size();
+			cardy /= combo.combo.size();
+			Pair cardpos = new Pair(cardx, cardy);
+			System.out.println("After:" + cardx + "," + cardy);
+			System.out.println("Pixel:" + pixelpos(cardpos));
+			
+			
+			if (!text.equals("")) {
+				playSound("clear");
+				tasks.add(new Card(this, this.pixelpos(cardpos), text));
+			}
+		}
+		// update chains
+		Vector<Combo> newcombos = new Vector<Combo>(combos.size());
+		Vector<Combo> oldcombo;
+		for (Combo comb : combos) {
+			comb.combot -= 1;
+			if (comb.combot == 0) {
+				for (Piece i : comb.combo) {
+					i.deleted = true;
+					for(Piece p : i.fallpieces(this)) {
+						System.out.println(p + " can now chain!");
+						p.canchain = true;
+						p.fallt = fallt - 1; // let the piece start falling
+					}
+				}
+			}
+			else {
+				newcombos.add(comb);
+			}
+		}
+		oldcombo = combos;
+		combos = newcombos;
+		oldcombo = null;
+	}
+	
+	private void playSound(String string) {
+		System.out.println("Playning sound " + string);		
+	}
+	private void tryaddpiecegroup(int y, int x, int y2, int x2, Combo combo) {
+		Piece a = map2piece.get(new Pair(x, y));
+		Piece b = map2piece.get(new Pair(x2, y2));
+		if(a == null || b == null) {
+			System.out.println("ERROR!");
+			printmap();
+			System.out.println(map2piece);
+			System.out.format("%d,%d %d,%d \n", x, y, x2, y2);
+		}
+		boolean chainteq = a.chaint == b.chaint && a.chaint == this.chaint && b.chaint == this.chaint;
+		boolean fallteq = a.fallt == b.fallt && a.fallt == fallt && b.fallt == fallt;
+		if(chainteq && fallteq) {
+			combo.combo.add(a);
+			combo.combo.add(b);
+			a.incombo = true;
+			b.incombo = true;
+		}
+	}
+	
+	public int clamp(int a, int lo, int hi) {
+		return Math.min(hi, Math.max(a, lo));
+	}
+	
+	public void mouseDragged(MouseEvent e) {
+		if(cur.p != null) {
+			cur.p.pos = blockpos(e.getX(), e.getY());
+			cur.p.pos.x = clamp(cur.p.pos.x, 0, width - cur.p.width());
+			cur.p.pos.y = clamp(cur.p.pos.y, 0, height - cur.p.height());
+		}
+	}
+
+	public void mouseMoved(MouseEvent e) {
+		// TODO Auto-generated method stub
+		
+	}
+	public void mouseClicked(MouseEvent e) {
+
+	}
+	
+	/**
+	 * Converts pixel coordinates to block coordinates.
+	 * @return A pair representing the block coordinates.
+	 */
+	public Pair blockpos(int x, int y) {
+		Pair a = new Pair((x - this.pos.x) / blocksize, (y - this.pos.y) / blocksize);
+		a.x = Math.min(Math.max(a.x, 0), width);
+		a.y = Math.min(Math.max(a.y, 0), height);
+		
+		return a;
+	}
+	
+	@Override
+	public void mouseEntered(MouseEvent arg0) {
+		// TODO Auto-generated method stub
+		
+	}
+	@Override
+	public void mouseExited(MouseEvent arg0) {
+		// TODO Auto-generated method stub
+		
+	}
+	@Override
+	public void mousePressed(MouseEvent e) {
+		mousepos.x = e.getX();
+		mousepos.y = e.getY();
+		if(cur.p == null) {
+			System.out.println("Mouse pos is "+mousepos);
+			selectpos = blockpos(mousepos.x, mousepos.y);			
+			updateflag[Updateplace] = true;
+		}
+	}
+	public void mouseReleased(MouseEvent e) {		
+		mousepos.x = e.getX();
+		mousepos.y = e.getY();
+		selectpos = blockpos(mousepos.x, mousepos.y);
+		updateflag[Updateplace] = true;
+	}
+}
+import java.awt.Graphics;
+import java.awt.image.BufferedImage;
+
+public class Card extends Task {
+	Pair pos;
+	double yspeed = -8.123f;
+	static final double yaccel = 3.734f;
+	double ypos; 
+	BufferedImage img;
+	int width;
+	int height;
+	
+	public Card(Area area, Pair ori, String text) {
+		super(600);
+		pos = ori;
+		ypos = pos.y;
+		width = 200;
+		height = 200;
+		img = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+		Graphics g = img.getGraphics();
+		g.drawString(text, 8, 8);
+		
+	}
+	
+	public void paint(Area area, Graphics g) {
+		g.drawImage(img, pos.x, pos.y, width, height, null);
+		
+	}
+	
+	public void run() {
+		yspeed += Card.yaccel;
+		ypos += yspeed;
+		pos.y = (int)ypos;
+	}
+}
+import java.util.*;
+
+public class Combo
+{
+    int combot;
+    HashSet<Piece> combo;
+    
+    public Combo(Area area) {
+    	combo = new HashSet<Piece>();
+    	combot = area.chaint;
+    }
+    
+    void gameupdate(Area area)
+    {
+    	/*
+		combot--;
+        if(combot == 0) {				
+            for(Piece i: combo)
+                for(Piece p: i.fallpieces(area)) {
+                	if(!p.canchain) {
+                		area.nchainblocks++;
+                		p.canchain = true;
+                	}
+                }
+        }*/
+    }
+}import java.awt.*;
+
+public class Cursor {
+	public Piece p;
+	public Pair pos;
+	public Boolean grabMode = true;
+	public Area area;
+	int size;
+	
+	public Cursor(Area area) {
+		this.area = area;
+		size = area.blocksize * 8;
+		p = null;
+		pos = new Pair(area.width / 2, area.height  / 2);
+	}
+	
+	void paint(Graphics g) {
+		if(p == null) {
+			int x = area.midpixelx(pos.x);
+			int y = area.midpixely(pos.y);
+			g.setColor(Color.RED);
+			g.drawLine(x-size, y, x+size, y);
+			g.drawLine(x, y-size, x, y+size);
+		}
+		else {			
+			//Pair pix = area.pixelpos(p.pos);
+			p.paint(area, g, false);
+		}
+	}
+	
+	//void moveup()    {if (pos.y > 0) pos.y -= 1; }
+	
+	void moveup()    {
+		if(pos.y > 0) pos.y--;		
+	}	
+	void movedown()  {
+		if (pos.y < area.height-1) pos.y += 1;
+	}
+	void moveleft()  {
+		if (pos.x > 0) pos.x -= 1;
+	}
+	void moveright() {
+		if (pos.x < area.width-1) pos.x += 1;
+	}
+	
+	void setPiece(Piece p) {
+		this.p = p;
+		pos = p.pos;
+	}
+}
+
+public class FallTask extends Task {
+	
+	private Piece p;
+
+	public FallTask(Area area, Piece p) {
+		super(area.fallt);
+		this.p = p;
+	}
+	
+	public void run() {
+		if(t == 0) {
+			
+		}
+	}
+}
+
+public enum Letter {
+	J, 
+	O, 
+	L, 
+	S, 
+	I,
+	Z, 
+	T;
+}
+
+import java.io.IOException;
+import java.net.URL;
+import java.util.*;
+import java.util.Timer;
+
+import javax.imageio.ImageIO;
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.awt.image.BufferedImage;
+
+public class Main extends JApplet implements ActionListener, KeyListener {	
+	
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = 1L;
+	Vector<Area> areas = new Vector<Area>();
+	//public Image offscreen;
+	public Graphics bufGraphics;
+	public Timer timer;
+	public static BufferedImage starimg;
+	public static boolean debug = true; 
+	
+	public void initimages() {		
+		URL base = getClass().getResource("image/star.png");
+
+		try {
+			starimg = (BufferedImage)ImageIO.read(base);
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+	}
+	
+	public Main() {
+		super();
+		this.setSize(640, 480);
+		Shape.initshapes();
+		initimages();
+		Area player1 = new Area(this);
+		
+		areas.add(player1);		
+		for(Area area : areas)
+		{
+			this.add(area);
+			//area.addKeyListener(this);
+			this.addKeyListener(area);
+			this.addMouseListener(area);
+			this.addMouseMotionListener(area);
+		}
+		
+		System.out.println("Started");
+		//this.addKeyListener(this);
+		this.requestFocusInWindow();
+	}
+	
+	public void start()
+	{		
+		this.setBackground(Color.BLACK);
+		//System.out.format("Focus: %s %s\n", this.requestFocusInWindow(), this.isFocusable());
+		for(Area area : areas) {
+			//System.out.format("Focus: %s %s\n", area.requestFocusInWindow(), area.isFocusable());
+			area.genstack();
+		}
+		//paint(this.getGraphics());
+		timer = new Timer();
+		timer.schedule(new UpdateThread(areas), 0, 100);
+		
+	}
+	
+	public void actionPerformed(ActionEvent e) {
+		
+	}
+
+	public static void main(String[] args) {
+		new Main();		
+	}
+/*
+	public void update(Graphics g) {
+		bufGraphics.clearRect(0, 0, getWidth(), getHeight());
+		paint(bufGraphics);
+		g.drawImage(offscreen, 0, 0, this);
+
+	}
+
+	public void paint(Graphics g) {		
+		for(Area area: areas)
+	 		area.paint(bufGraphics);		
+	}
+*/	
+	public void keyPressed(KeyEvent e) {
+	/*
+		for(Area area : areas)
+			area.keyPressed(e);
+			*/
+	}
+
+	public void keyReleased(KeyEvent arg0) {
+	}
+
+	public void keyTyped(KeyEvent arg0) {
+	}
+}
+
+public class Pair implements Comparable<Pair> {
+	public int x, y;
+	
+	public Pair(int x, int y) {
+		this.x = x;
+		this.y = y;		
+	}
+	
+	public String toString() {
+		return "("+x+","+y+")";
+	}
+
+	public int compareTo(Pair o) {				
+		int a = x | y << 8;
+		int b = o.x | o.y << 8;
+		if(a < b) return -1;
+		else if(a > b) return 1;
+		return 0;
+	}
+	
+	public int hashCode() {
+		//System.out.format("(%d, %d) hash:%4x\n", x, y, x + (y << 8));
+		return x | (y << 8);
+	}
+	
+	public boolean equals(Object b) {
+		if(b == null) return false;
+		return x == ((Pair)b).x && y == ((Pair)b).y;
+	}
+	
+}
+import java.awt.Color;
+import java.awt.Graphics;
+import java.util.*;
+import java.awt.image.BufferedImage;
+
+;
+
+public class Piece {
+	public Shape shape;
+	public int rot;
+	int id;
+	public Pair pos;
+	public Pair starpos;
+	public boolean canchain = false;
+	public boolean incombo = false;
+	public boolean deleted = false;
+	// public int flags;
+	public int chainreset;
+	public int chaint;
+	public int fallt;
+	public Area area;
+
+	// for use in can combo
+	private static final int[][] adj = { { 1, 0 }, { -1, 0 }, { 0, 1 },
+			{ 0, -1 } };
+
+	public int width() {
+		return shape.shape[rot][0].length;
+	}
+
+	public int height() {
+		return shape.shape[rot].length;
+
+	}
+
+	public void rotateright() {
+		rot--;
+		if (rot < 0)
+			rot = 3;
+		int temp = starpos.x;
+		starpos.x = shape.shape[rot][0].length - starpos.y - 1;
+		starpos.y = temp;
+	}
+
+	public void rotateleft() {
+		rot = (rot + 1) % 4;
+		int temp = starpos.x;
+		starpos.x = starpos.y;
+		starpos.y = shape.shape[rot].length - temp - 1;
+	}
+
+	public Piece(Area area, Pair pos, Letter letter, int rot) {
+		this.pos = pos;
+		this.shape = Shape.shapes[letter.ordinal()];
+		this.chaint = area.chaint;
+		this.chainreset = area.chainreset;
+		// falling = False
+		this.fallt = area.fallt;
+		this.rot = rot;
+		Pair temp = shape.body[rot][area.rand.nextInt(shape.body[rot].length)];
+		this.starpos = new Pair(temp.x, temp.y);
+	}
+
+	Boolean canfit(HashMap<Pair, Piece> map2piece) {
+		for (Pair p : shape.body[rot]) {
+			if (map2piece.get(realpos(p)) != null)
+				return false;
+		}
+		return true;
+	}
+
+	public void paint(Area area, Graphics g, Boolean fill) {
+		/*
+		 * for(Pair p: shape.body[rot]) { Pair p1 = area.pixelpos(new
+		 * Pair(p.x+pos.x, p.y+pos.y)); g.setColor(shape.color);
+		 * System.out.format("p1x %d, p1y %d\n", p1.x, p1.y); g.fillRect(p1.x,
+		 * p1.y, area.blocksize, area.blocksize); g.setColor(Color.WHITE);
+		 * g.drawRect(p1.x, p1.y, area.blocksize, area.blocksize); }
+		 * g.setColor(Color.WHITE);
+		 */
+		Pair star = area
+				.pixelpos(new Pair(starpos.x + pos.x, starpos.y + pos.y));
+		Pair p = area.pixelpos(pos);
+		BufferedImage im;
+		if (fill && !incombo)
+			im = shape.img[rot];
+		else
+			im = shape.outlineimg[rot];
+		g.drawImage(im, p.x, p.y, im.getWidth(), im.getHeight(), null);
+		g.drawImage(Main.starimg, star.x, star.y, Main.starimg.getWidth(),
+				Main.starimg.getHeight(), null);
+
+		if (Main.debug == true) {
+			g.drawString(String.valueOf(fallt), p.x, p.y);
+
+			// for(Pair pair : shape.bottom[rot]) {
+			// Pair o = area.pixelpos(realpos(pair));
+			// g.setColor(Color.RED);
+			// g.drawOval(o.x, o.y, area.blocksize, area.blocksize);
+			// }
+			g.setColor(Color.PINK);
+			if (canchain) {
+				g.drawOval(p.x, p.y, area.blocksize, area.blocksize);
+			}
+		}
+	}
+
+	public void domap(Area area) {
+		for (Pair p : shape.body[rot]) {
+			try {
+				if (p.x == starpos.x && p.y == starpos.y) {
+					int s = 2;
+					if (incombo)
+						s = 1;
+					area.map[p.y + pos.y][p.x + pos.x] = s;
+				} else
+					area.map[p.y + pos.y][p.x + pos.x] = 1;
+			} catch (ArrayIndexOutOfBoundsException e) {
+				System.out.format("%d %d height:%d width:%d\n", p.x + pos.x,
+						p.y + pos.y, area.height, area.width);
+				throw e;
+			}
+		}
+	}
+
+	public void map(Area area) {
+		domap(area);
+		if (!incombo)
+			dodict(area.map2piece);
+	}
+
+	public void unmap(Area area) {
+		clearmap(area);
+		cleardict(area.map2piece);
+	}
+
+	public void dodict(HashMap<Pair, Piece> map2piece) {
+		for (Pair p : shape.body[rot])
+			map2piece.put(new Pair(p.x + pos.x, p.y + pos.y), this);
+	}
+
+	public void clearmap(Area area) {
+		for (Pair p : shape.body[rot])
+			area.map[p.y + pos.y][p.x + pos.x] = 0;
+	}
+
+	public String toString() {
+		String rotstring = "";
+		if (rot == 0)
+			rotstring = "^";
+		if (rot == 1)
+			rotstring = ">";
+		if (rot == 2)
+			rotstring = "v";
+		if (rot == 4)
+			rotstring = "<";
+		return "" + shape.letter + "" + pos + "*" + starpos + rotstring;
+	}
+
+	public void cleardict(HashMap<Pair, Piece> map2piece) {
+		for (Pair p : shape.body[rot])
+			map2piece.remove(new Pair(p.x + pos.x, p.y + pos.y));
+	}
+
+	public void gameupdate(Area area) {
+		if (fallt < area.fallt) {
+			if (fallt > 0)
+				fallt -= 1;
+			else {
+				if (canfall(area)) {
+					System.out
+							.format("calling fallpieces for piece %s\n", this);
+					System.out.println(area.map2piece);
+					for (Piece p : this.fallpieces(area)) {
+						System.out.format("Piece %s: ready to fall!\n",
+								p.shape.letter);
+						;
+						p.pos.y += 1;
+					}
+					pos.y += 1;
+					area.updateflag[Area.Updatemap] = true;
+				} else {
+					// if(!cancombo(area)) {
+					// // sound['land'].Play();
+					// }
+					// else {
+					// for(Piece p: this.fallpieces(area))
+					// p.canchain = false;
+					// canchain = false;
+					// }
+					fallt = area.fallt;
+				}
+			}
+		}
+		if (fallt == area.fallt) {
+			if (canchain) {
+				// log('chain reset for %d is %d' % (id, chainreset));
+				if (chainreset > 0)
+					chainreset -= 1;
+				else if (chainreset == 0) {
+					chainreset = area.chainreset;
+					// log('%d chaining deactivated' % id);
+					for (Piece p : this.fallpieces(area))
+						p.canchain = false;
+					canchain = false;
+				}
+			}
+		}
+	}
+
+	public boolean cancombo(Area area) {
+		int x = pos.x + starpos.x;
+		int y = pos.y + starpos.y;
+		for (int[] a : Piece.adj) {
+			int x2 = x + a[0];
+			int y2 = y + a[1];
+			if (x2 < 0 || y2 < 0 || y2 >= area.height || x2 >= area.width)
+			{}
+			else if (area.map[y2][x2] == 2)
+				return true;
+		}
+		return false;
+	}
+
+	public boolean canfall(Area area) {
+		if (chaint < area.chaint)
+			return false;
+		for (Pair p : shape.bottom[rot]) {
+			if (pos.x + p.x == area.map[0].length) {
+				System.out.println("area hegiht:" + (pos.x + p.x) + " "
+						+ area.map[0].length);
+				System.out.format("width:%d", width());
+				shape.printShape(shape.shape[rot]);
+			}
+			if (p.y + pos.y < 0) {
+			} else if (p.y + pos.y < area.height
+					&& area.map[pos.y + p.y][pos.x + p.x] == 0) {
+			} else
+				return false;
+		}
+		return true;
+	}
+
+	void bottomfall(Area area) {
+		pos.y = -3;
+		while (canfall(area))
+			pos.y++;
+	}
+
+	HashSet<Piece> adjpieces(Pair[] coords, Area area) {
+		HashSet<Piece> s = new HashSet<Piece>();
+		// System.out.println(area.map2piece);
+		for (Pair p : coords) {
+			Pair p1 = realpos(p);
+			Piece piece = area.map2piece.get(p1);
+			// System.out.format("coords:%s real:%s self:%s\n", p, p1, pos);
+			if (piece != null) {
+				s.add(piece);
+				// ssSystem.out.format("got piece %s\n", piece.letter);
+			}
+		}
+
+		return s;
+	}
+
+	public Pair realpos(Pair relative) {
+		return new Pair(relative.x + pos.x, relative.y + pos.y);
+	}
+
+	public HashSet<Piece> alltoppieces(Area area) {
+		HashSet<Piece> s = new HashSet<Piece>();
+//		System.out.format("%sadjpieces:%s %s\n", this, adjpieces(
+//				shape.top[rot], area), shape.top[rot]);
+		for (Piece p : adjpieces(shape.top[rot], area)) {
+			if (this != p) {
+				s.add(p);
+				s.addAll(p.alltoppieces(area));
+			}
+		}
+		return s;
+	}
+
+	HashSet<Piece> fallpieces(Area area) {
+		HashSet<Piece> alltopset = alltoppieces(area);
+		HashSet<Piece> b = new HashSet<Piece>();
+		HashSet<Piece> remv = new HashSet<Piece>();
+//		System.out.format("%salltopset:%s\n", this, alltopset);
+		alltopset.add(this);
+		for (Piece i : alltopset) {
+			if (!(i == this)) {
+//				System.out.format("%s bottom has %s\n", i, i.adjpieces(
+//						shape.bottom[i.rot], area));
+//				System.out.format("%s alltopset has %s\n", this, alltopset);
+				if (alltopset.containsAll(i.adjpieces(i.shape.bottom[i.rot],
+						area))) {
+//					System.out.println(i + " added.");
+					b.add(i);
+				} else {
+//					System.out.println("Removed " + i);
+					remv.addAll(i.alltoppieces(area));
+				}
+			}
+		}
+		b.removeAll(remv);
+		return b;
+	}
+}
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.GraphicsConfiguration;
+import java.awt.image.BufferedImage;
+import java.util.HashSet;
+import java.util.Vector;
+
+public class Shape {	
+	class Line {
+		int x1, y1, x2, y2;
+		public Line(int x1, int y1, int x2, int y2) {
+			this.x1 = x1;
+			this.y1 = y1;
+			this.x2 = x2;
+			this.y2 = y2;
+		}
+		Boolean equals(Line o) {
+			return x1 == o.x1 && y1 == o.y1 && x2 == o.x2 && y2 == o.y2;  
+		}
+		public int hashCode() {
+			return x1 | y1 << 2 | x2 << 4 | y2 << 6;
+		}
+	}
+	public int[][][] shape;
+    public Pair[][] top;
+    public Pair[][] bottom;
+    public Pair[][] body;
+    //public int[][][] outline;
+    public int[][] baseshape;
+    public BufferedImage[] img;
+    public BufferedImage[] outlineimg;
+    public Letter letter;
+    public Color color;
+
+    public final static int[][] zshape = 
+    {{1,1,0},
+     {0,1,1}};
+    public final static int[][] ishape = 
+    {{1},
+     {1},
+     {1},
+     {1}};
+    public final static int[][] oshape =
+    {{1,1},
+     {1,1}};
+    public final static int[][] sshape = 
+    {{0,1,1},
+     {1,1,0}};
+    public final static int[][] lshape =
+    {{1,0},
+     {1,0},
+     {1,1}};
+    public final static int[][] jshape =
+    {{0,1},
+     {0,1},
+     {1,1}};
+    public final static int[][] tshape =
+    {{0,1,0},
+     {1,1,1}};
+    
+    public static Color[] letter2color;    
+    public static Shape[] shapes;
+    
+    public static void initshapes()
+    {
+    	
+    	shapes = new Shape[Letter.values().length];
+    	shapes[Letter.J.ordinal()] = new Shape(Letter.J, jshape, Color.RED);
+    	shapes[Letter.O.ordinal()] = new Shape(Letter.O, oshape, Color.YELLOW);
+    	shapes[Letter.L.ordinal()] = new Shape(Letter.L, lshape, Color.GREEN);
+    	shapes[Letter.S.ordinal()] = new Shape(Letter.S, sshape, Color.CYAN);
+    	shapes[Letter.I.ordinal()] = new Shape(Letter.I, ishape, Color.BLUE);
+    	shapes[Letter.Z.ordinal()] = new Shape(Letter.Z, zshape, Color.MAGENTA);
+    	shapes[Letter.T.ordinal()] = new Shape(Letter.T, tshape, Color.ORANGE);
+    }
+    
+    void rotateright()
+    {
+        invert();
+    	flip();
+    }
+
+    public void printShape(int[][] shape)
+    {
+        for (int y = 0; y < shape.length; y++) {                
+            for (int x = 0; x < shape[0].length; x++) {
+                System.out.print(shape[y][x]);
+            }
+            System.out.println();
+        }
+    }
+
+    void invert()
+    {
+        int[][] newshape = new int[baseshape[0].length][baseshape.length];
+        for (int x = 0; x < baseshape[0].length; x++)
+            for (int y = 0; y < baseshape.length; y++)
+                newshape[x][y] = baseshape[y][x];
+        baseshape = newshape;
+    }        
+
+    void flip() // flip vertically
+    {
+        int ylen = baseshape.length;
+        int temp;
+        for(int x=0; x<baseshape[0].length; x++)
+            for(int y=0; y<ylen/2; y++)
+            {
+                temp = baseshape[y][x];
+                baseshape[y][x] = baseshape[ylen - y-1][x];
+                baseshape[ylen - y-1][x] = temp;
+            }
+    }
+
+    public Shape(Letter letter, int[][] template, Color color)
+    {
+    	final int ROTS = 4;
+        this.baseshape = template;
+        this.letter = letter;
+        this.color = color;
+        shape = new int[ROTS][][];
+        body = new Pair[ROTS][4];
+        bottom = new Pair[ROTS][];
+        top = new Pair[ROTS][];
+        //outline = new int[ROTS][][];
+        img = new BufferedImage[ROTS];
+        outlineimg = new BufferedImage[ROTS];
+        for (int rot = 0; rot < ROTS; rot++)
+        {            
+        	shape[rot] = new int[baseshape.length][baseshape[0].length];
+            int b = 0;
+        	for (int x = 0; x < baseshape[0].length; x++)
+                for (int y = 0; y < baseshape.length; y++) {
+                	shape[rot][y][x] = baseshape[y][x];
+                	if(shape[rot][y][x] == 1) {
+                		body[rot][b] = new Pair(x, y);
+                		b++;
+                	}
+                }
+    		Vector<Pair> vbottom = new Vector<Pair>();
+    		for(int x=0; x<baseshape[0].length; x++) {
+    			for(int y=baseshape.length-1; y>-1; y--) {
+    				if(baseshape[y][x] == 1) {
+    					vbottom.add(new Pair(x, y+1));
+    					break;
+    				}
+    			}
+    		}
+    		
+    		Vector<Pair> vtop = new Vector<Pair>();
+    		for(int x=0; x<baseshape[0].length; x++) {
+    			for(int y=0; y<baseshape.length; y++) {
+    				if(baseshape[y][x] == 1) {
+    					vtop.add(new Pair(x, y-1));
+    					break;
+    				}
+    			}
+    		}
+    		    		
+    		bottom[rot] = new Pair[vbottom.size()];
+    		vbottom.toArray(bottom[rot]);
+    		top[rot] = new Pair[vtop.size()];
+    		vtop.toArray(top[rot]);
+    		
+    		int[][] vline = new int[5][5];
+    		int[][] hline = new int[5][5];
+    		
+    		for(Pair p: body[rot]) {
+    		    int x = p.x;
+    		    int y = p.y;
+    			int[][] adjpoints = {{x, y, x+1, y}, {x, y, x, y+1}, {x+1, y, x+1, y+1}, {x, y+1, x+1, y+1}};    			
+    			////System.out.format("%s {{%d, %d, %d, %d}, {%d, %d, %d, %d}, {%d, %d, %d, %d}, {%d, %d, %d, %d}}\n", letter, x, y, x+1, y, x, y, x, y+1, x+1, y, x+1, y+1, x, y+1, x+1, y+1);
+    			for(int[] line : adjpoints) {
+    				if(line[0] == line[2]) {
+						if(vline[line[0]][line[1]] == 1)
+							vline[line[0]][line[1]] = 0;
+						else
+							vline[line[0]][line[1]] = 1;
+    				} else {
+						if(hline[line[0]][line[1]] == 1)
+							hline[line[0]][line[1]] = 0;
+						else
+							hline[line[0]][line[1]] = 1;
+    				}
+    			}
+    		}
+    		
+    		img[rot] = new BufferedImage(baseshape[0].length*16, baseshape.length*16, BufferedImage.TYPE_INT_ARGB);
+        	outlineimg[rot] = new BufferedImage(baseshape[0].length*16, baseshape.length*16, BufferedImage.TYPE_INT_ARGB);
+    		Graphics2D g = img[rot].createGraphics();
+    		Graphics2D outg = outlineimg[rot].createGraphics();
+        	g.setColor(color);
+        	for(Pair p: body[rot])
+        		g.fillRect(p.x*16, p.y*16, 16, 16);
+        	
+        	g.setColor(Color.WHITE);
+        	for(int y=0; y<5; y++) {
+        		for(int x=0; x<5; x++) {
+        			if(hline[x][y] == 1) {
+        				int dy = Math.min(y*16, img[rot].getHeight()-1);
+        				g   .drawLine(x*16, dy, (x+1)*16-1, dy);
+        				outg.drawLine(x*16, dy, (x+1)*16-1, dy);
+        			}
+        			if(vline[x][y] == 1) {
+        				int dx = Math.min(x*16, img[rot].getWidth()-1);
+        				g   .drawLine(dx, y*16, dx, (y+1)*16-1);
+        				outg.drawLine(dx, y*16, dx, (y+1)*16-1);
+        			}
+        		}
+        	}
+            rotateright();
+        }
+    }
+}
+import java.util.*;
+import java.awt.*;
+
+public class Task {	
+	int maxt;
+	int t;
+	public Task(int timer) {
+		t = timer;
+	}
+	
+	void paint(Area area, Graphics g) {
+	
+	}
+	
+	void run() {
+		
+	}
+	
+	void update() {
+		if(t > 0)
+			t--;
+		run();
+	}
+	
+}
+import java.util.HashSet;
+import java.util.Random;
+
+public class TestClass {
+
+	public static void main(String[] args) {		
+		final int MAXTRIES = 16;
+		final long MAXTRIAL = 500l;
+		
+		int array[] = {20, 30, 8, 21, 1, 22, 23}; 
+		int rdata[][] = {{1, 3, 30}, {20, 1}, {3}, {1,3}, {2,4}, {6, 8}, {22, 23}, {6, 1}}; 
+		
+		int b = 0;
+		int c = 0;
+		long a = System.currentTimeMillis();
+		for(int j=0; j<MAXTRIAL; j++) {
+			HashSet<Integer> beta = new HashSet<Integer>();
+			HashSet<Integer> remove = new HashSet<Integer>();
+			for(int i=0; i<array.length; i++) {
+				if(!beta.contains(i))					
+					for(int x=0; x<rdata[i].length; x++)
+						beta.add(rdata[i][x]);
+				else
+					for(int x=0; x<rdata[i].length; x++)
+						remove.add(rdata[i][x]);
+			}
+			beta.removeAll(remove);
+			System.out.print("beta is ");
+			for(Integer i : beta)
+				System.out.print(i + " ");
+			System.out.println();
+		}
+			
+		long plusresult = System.currentTimeMillis() - a;
+		a = System.currentTimeMillis();		
+		for(int j=0; j<MAXTRIAL; j++) {
+			long beta = 0l;
+			long remove = 0l;
+			for(int i=0; i<array.length; i++) {
+				if((beta & (1<<i)) == 0)					
+					for(int x=0; x<rdata[i].length; x++)
+						beta |= (1<<rdata[i][x]);
+				else
+					for(int x=0; x<rdata[i].length; x++)
+						remove |= (1<<rdata[i][x]);
+			}
+			beta &= ~remove;
+			System.out.print("beta is ");
+			for(int i=0; i<31; i++) {
+				if((beta & 1<<i) > 0)
+					System.out.print(i + " ");
+			}
+			System.out.println();
+		}
+		long orresult = System.currentTimeMillis() - a;
+		System.out.format("Plus:%d or:%d %d %d", plusresult, orresult, c, b);
+	}
+
+}
+import java.util.*;
+
+public class UpdateThread extends TimerTask {
+	Vector<Area> areas;
+	
+	public UpdateThread(Vector<Area> areas2) {
+		this.areas = areas2;
+	}
+	
+	public void run() {
+		for(Area area : areas)
+			area.gameupdate();		
+	}
+}
+
